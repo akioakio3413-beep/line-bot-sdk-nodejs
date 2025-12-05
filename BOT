@@ -1,0 +1,87 @@
+import express from "express";
+import { Client, middleware } from "@line/bot-sdk";
+import fetch from "node-fetch";
+
+// LINE Developers の設定
+const config = {
+  channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN,
+  channelSecret: process.env.CHANNEL_SECRET
+};
+
+const client = new Client(config);
+const app = express();
+
+// ============================
+// 天気取得（OpenWeather API）
+// ============================
+async function getWeather(city) {
+  const apiKey = process.env.WEATHER_API_KEY; // ←後で環境変数に入れる
+  const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(city)},JP&appid=${apiKey}&lang=ja&units=metric`;
+
+  const res = await fetch(url);
+  const data = await res.json();
+
+  if (data.cod !== 200) {
+    return "その場所の天気が見つかりませんでした。";
+  }
+
+  return `
+【${data.name} の天気】
+天気：${data.weather[0].description}
+気温：${data.main.temp}℃
+湿度：${data.main.humidity}%
+風速：${data.wind.speed}m/s
+  `;
+}
+
+// ============================
+// メイン処理（Webhook）
+// ============================
+app.post("/webhook", middleware(config), async (req, res) => {
+  const results = await Promise.all(
+    req.body.events.map(handleEvent)
+  );
+  res.json(results);
+});
+
+// ============================
+// イベント処理
+// ============================
+async function handleEvent(event) {
+  if (event.type !== "message" || event.message.type !== "text") {
+    return null;
+  }
+
+  const text = event.message.text;
+
+  // 例：「東京の天気」「大阪 天気」「名古屋 天気教えて」
+  if (text.includes("天気")) {
+    const city = text.replace("の天気", "").replace("天気", "").trim();
+
+    if (city.length === 0) {
+      return client.replyMessage(event.replyToken, {
+        type: "text",
+        text: "「東京の天気」みたいに市区町村名を入れてください！"
+      });
+    }
+
+    const weather = await getWeather(city);
+
+    return client.replyMessage(event.replyToken, {
+      type: "text",
+      text: weather
+    });
+  }
+
+  // それ以外はオウム返し
+  return client.replyMessage(event.replyToken, {
+    type: "text",
+    text: text
+  });
+}
+
+// ============================
+// Render 用ポート設定
+// ============================
+const port = process.env.PORT || 3000;
+app.listen(port, () => console.log(`Server running on ${port}`));
